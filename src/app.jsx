@@ -5313,7 +5313,19 @@ function Delnik({ data, uloz, v }) {
           <em>{s.zalohyCeka.length} plateb</em>
         </div>
         <div className="karta">
-          <small>On dluží nám</small>
+          <small>Nedoloženo z plateb</small>
+          <b className="n" style={{ color: s.nedolozeno > 0 ? "#B03A2E" : "#3E6B4C" }}>
+            {s.nedolozeno < 0 ? "− " : ""}
+            {kc(Math.abs(s.nedolozeno))}
+          </b>
+          <em>
+            {s.nedolozeno > 0
+              ? "dokud nedoloží, je to dluh"
+              : "vše doloženo"}
+          </em>
+        </div>
+        <div className="karta">
+          <small>Půjčky a osobní dluh</small>
           <b className="n" style={{ color: s.zbyvaDluh > 0 ? "#B03A2E" : "#3E6B4C" }}>
             {kc(s.zbyvaDluh)}
           </b>
@@ -5366,7 +5378,7 @@ function Delnik({ data, uloz, v }) {
               <i>
                 <Ik d={IKO.stit} c="#0C3B2E" s={16} />
               </i>
-              Má ke všemu podklady?
+              Co z poslaných peněz doložil?
             </span>
             <span className="n">posláno {kc(s.vyplaceno)}</span>
           </h2>
@@ -5418,30 +5430,46 @@ function Delnik({ data, uloz, v }) {
                   {kc(s.odpracovano)}
                 </td>
               </tr>
+              <tr style={{ borderTop: "1.5px solid #D8CDB6" }}>
+                <td />
+                <td style={{ fontWeight: 800, paddingTop: 9 }}>
+                  Materiál + práce dohromady
+                </td>
+                <td className="r n nowrap" style={{ fontWeight: 800, paddingTop: 9 }}>
+                  {kc(s.podlozeno)}
+                </td>
+              </tr>
+              <tr>
+                <td />
+                <td style={{ color: "#5E7268" }}>Posláno mu celkem</td>
+                <td className="r n nowrap" style={{ color: "#5E7268" }}>
+                  − {kc(s.vyplaceno)}
+                </td>
+              </tr>
               <tr style={{ borderTop: "2px solid #C9AE85" }}>
                 <td>
                   <span className="tecka" style={{ background: "#E0D5BF" }} />
                 </td>
                 <td style={{ fontWeight: 800, paddingTop: 11 }}>
-                  {s.nevysvetleno > 0 ? "Zatím nevysvětleno" : "Odpracováno nad rámec plateb"}
+                  {s.nedolozeno > 0 ? "Nedoloženo — bere se jako dluh" : "Odpracováno nad rámec plateb"}
                 </td>
                 <td
                   className="r n nowrap"
                   style={{
                     fontWeight: 800,
                     paddingTop: 11,
-                    color: s.nevysvetleno > 0 ? "#B03A2E" : "#3E6B4C",
+                    color: s.nedolozeno > 0 ? "#B03A2E" : "#3E6B4C",
                   }}
                 >
-                  {kc(Math.abs(s.nevysvetleno))}
+                  {kc(Math.abs(s.nedolozeno))}
                 </td>
               </tr>
             </tbody>
           </table>
           <p className="pozn">
-            {s.nevysvetleno > 0
-              ? `Z poslaných peněz zbývá vysvětlit ${kc(s.nevysvetleno)}. To musí pokrýt odpracované hodiny — až doplníš pracovní deník, číslo klesne. Co zůstane, je podklad k jednání.`
-              : `Podklady pokrývají všechno, co jste poslali. ${kc(-s.nevysvetleno)} je práce navíc, kterou mu ještě dlužíte.`}
+            {s.nedolozeno > 0
+              ? `Na ${kc(s.nedolozeno)} zatím nejsou podklady. Bere se to jako jeho dluh, dokud je nedoloží — odpracovanými hodinami nebo fakturou za materiál. Jak budeš doplňovat pracovní deník, částka bude klesat.`
+              : `Podklady pokrývají všechno, co jste poslali. ${kc(-s.nedolozeno)} je práce navíc, kterou mu ještě dlužíte.`}
           </p>
         </div>
       )}
@@ -6084,7 +6112,7 @@ function FormDluh({ data, uloz, s, zavri }) {
           <i>
             <Ik d={IKO.mince} c="#0C3B2E" s={16} />
           </i>
-          Dluh {data.delnik.jmeno}y
+          Půjčky a osobní dluh — {data.delnik.jmeno}
         </span>
         <button className="x" onClick={zavri} aria-label="Zavřít">
           ×
@@ -6369,7 +6397,13 @@ function spocitejDelnika(data) {
     (z) => !(data.polozky || []).some((p) => p.zalohaId === z.id)
   );
   const zalohyCekaCelkem = zalohyCeka.reduce((a, z) => a + z.castka, 0);
-  const nevysvetleno = vyplaceno - dolozenoFakturami - odpracovano;
+  // Čím jsou poslané peníze podložené: odpracovanou prací a materiálem, který
+  // z nich nakoupil a doložil fakturou. Co zbyde, po něm chceme doložit —
+  // a dokud to nedoloží, je to dlužná částka.
+  const podlozeno = odpracovano + dolozenoFakturami;
+  const nedolozeno = vyplaceno - podlozeno;
+  // Původní název, drží se kvůli místům, která s ním už počítají.
+  const nevysvetleno = nedolozeno;
   const neproplacene = material.filter((p) => p.proplaceno === false);
   const neproplacenoCelkem = neproplacene.reduce((a, p) => a + p.castka, 0);
   const kVyplate = zbyvaVyplatit + neproplacenoCelkem;
@@ -6379,7 +6413,7 @@ function spocitejDelnika(data) {
     zbyvaVyplatit, vyplacenoNaPraci, dluhPolozky, dluhCelkem, dluhPripsano, dluhOdmazano, zbyvaDluh, mesicniRada,
     hodinyMesic, tentoMesic, hodinyCelkove, mojeHodiny, material, materialCelkem,
     neproplacene, neproplacenoCelkem, kVyplate, zalohyCeka, zalohyCekaCelkem,
-    dolozenoFakturami, nevysvetleno,
+    dolozenoFakturami, nevysvetleno, podlozeno, nedolozeno,
   };
 }
 
