@@ -2190,10 +2190,16 @@ function Doklad({ p, zaklad }) {
   );
 }
 
-function Smazat({ onSmaz, co = "tento záznam", popisek = "Smazat" }) {
+// Běžně stačí nenápadné ×. Tam, kde stojí vedle velkých tlačítek a dalo by
+// se přehlédnout, se dá zapnout tlacitko a vykreslí se s popiskem.
+function Smazat({ onSmaz, co = "tento záznam", popisek = "Smazat", tlacitko = false }) {
   const [ptam, setPtam] = useState(false);
   if (!ptam)
-    return (
+    return tlacitko ? (
+      <button className="btn2" onClick={() => setPtam(true)}>
+        {popisek}
+      </button>
+    ) : (
       <button className="x" onClick={() => setPtam(true)} aria-label={popisek}>
         ×
       </button>
@@ -7499,6 +7505,23 @@ function RozpadPolozky({ data, uloz, polozka }) {
       ulozRadky(radky.map((r) => (r.prirazeno === id ? { ...r, prirazeno: null } : r)));
   };
 
+  // Doklad nejde ze seznamu ke schválení dostat jinak než úplným rozepsáním.
+  // Tohle ho z něj odebere a nechá jako běžný výdaj — částka zůstane,
+  // jen nebude rozepsaná do kategorií.
+  const nechatVcelku = () =>
+    uloz({
+      ...data,
+      polozky: data.polozky.map((p) =>
+        p.id === polozka.id
+          ? {
+              ...p,
+              kRozpadu: false,
+              popis: p.popis.replace(/\s*\(čeká na rozpad\)\s*$/i, ""),
+            }
+          : p
+      ),
+    });
+
   const zapis = () => {
     if (!hotovo) return;
     const zaklad = polozka.popis.replace(/\s*\(čeká na rozpad\)\s*$/i, "");
@@ -7691,7 +7714,26 @@ function RozpadPolozky({ data, uloz, polozka }) {
         <button className="btn" onClick={zapis} disabled={!hotovo}>
           Rozdělit a zapsat
         </button>
+        <button className="btn2" onClick={nechatVcelku}>
+          Nechat nerozdělený
+        </button>
+        <Smazat
+          tlacitko
+          popisek="Smazat doklad"
+          co="tenhle doklad i s jeho částkou"
+          onSmaz={() =>
+            uloz({
+              ...data,
+              polozky: data.polozky.filter((p) => p.id !== polozka.id),
+            })
+          }
+        />
       </div>
+      <p className="pozn">
+        <b>Nechat nerozdělený</b> doklad z tohoto seznamu odebere, ale částka
+        zůstane ve výdajích — jen nebude rozepsaná do kategorií.{" "}
+        <b>Smazat</b> ho odstraní i s částkou.
+      </p>
     </div>
   );
 }
@@ -8197,6 +8239,8 @@ function Schvalovani({ data, uloz }) {
                   Schválit a zapsat
                 </button>
                 <Smazat
+                  tlacitko
+                  popisek="Smazat"
                   co="tento zápis úplně"
                   onSmaz={() =>
                     uloz({
