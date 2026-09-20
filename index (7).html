@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0C3B2E" />
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
+<meta name="googlebot" content="noindex, nofollow" />
+<meta name="referrer" content="no-referrer" />
+<title>Deník</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='5' fill='%230C3B2E'/><path d='M4 11 12 4.5 20 11' fill='none' stroke='%23B4562A' stroke-width='2.4' stroke-linecap='round'/><path d='M6 10.5h12V20H6z' fill='%23fff'/><rect x='9' y='13' width='2.6' height='3.2' fill='%230C3B2E'/><rect x='13' y='13' width='2.6' height='3.2' fill='%230C3B2E'/></svg>" />
+<style>
+  html,body{margin:0;padding:0;background:#F4EEE1;}
+  #root{min-height:100vh;}
+  .nacitam{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:#5E7268;text-align:center;padding:80px 20px;font-size:14px;}
+  .chyba{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    max-width:520px;margin:60px auto;background:#fff;border:3px solid #B03A2E;
+    border-radius:16px;padding:22px;color:#132C22;line-height:1.55;font-size:14px;}
+  .chyba b{display:block;font-size:17px;margin-bottom:8px;color:#B03A2E;}
+  .chyba code{display:block;background:#F7DED9;border-radius:8px;padding:10px 12px;
+    margin-top:12px;font-size:12px;word-break:break-word;}
+</style>
+</head>
+<body>
+<div id="root"><p class="nacitam">Otevírám deník…</p></div>
+<script>
+  window.onerror = function (zprava, zdroj, radek) {
+    var r = document.getElementById("root");
+    if (r) r.innerHTML =
+      '<div class="chyba"><b>Aplikace se nespustila.</b>' +
+      'Pošli prosím tenhle text do chatu, podle něj se to dá opravit.' +
+      '<code>' + zprava + '<br>(' + (zdroj || "").split("/").pop() +
+      ", řádek " + radek + ')</code></div>';
+  };
+</script>
+<script src="config.js?v=5"></script>
+<script src="app.js?v=5"></script>
+</body>
+</html>
