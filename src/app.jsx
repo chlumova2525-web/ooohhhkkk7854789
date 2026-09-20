@@ -8989,7 +8989,10 @@ function Nastaveni({ data, uloz, odhlas }) {
               try {
                 const nove = JSON.parse(obnova);
                 if (!nove || typeof nove !== "object") throw new Error("x");
-                uloz({ ...nove, heslo: data.heslo });
+                // Záloha může být z libovolně staré verze — musí projít
+                // stejnou migrací jako data načtená z databáze. Bez toho by
+                // se do aplikace dostaly klíče pod původními názvy.
+                uloz(migruj2({ ...nove, heslo: data.heslo }));
                 setObnova("");
                 setPotvrzeno("");
                 setChybaObnovy("");
