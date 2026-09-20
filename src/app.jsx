@@ -62,19 +62,56 @@ function zrusRelaci() {
   } catch (e) {}
 }
 
+// Supabase vrací pod stavem 400 spoustu různých důvodů. Házet na všechny
+// „heslo nesedí" je zavádějící — hlavně u nepotvrzeného účtu, kdy je heslo
+// správně a uživatel marně zkouší jiná.
+const DUVODY_PRIHLASENI = {
+  invalid_credentials: "E-mail nebo heslo nesedí.",
+  email_not_confirmed:
+    "Účet zatím není potvrzený. Otevři odkaz v e-mailu, který přišel po jeho založení.",
+  user_banned: "Tenhle účet je zablokovaný.",
+  over_request_rate_limit: "Moc pokusů za sebou. Zkus to prosím za chvíli.",
+  over_email_send_rate_limit: "Moc e-mailů za sebou. Zkus to prosím za chvíli.",
+  validation_failed: "Vyplň prosím e-mail i heslo.",
+};
+
+// Když fetch vůbec neodejde, prohlížeč řekne jen „Failed to fetch". Příčina
+// bývá mimo aplikaci — DNS, blokace, výpadek — a bez nápovědy se to hledá těžko.
+function jeSitovaChyba(e) {
+  return e instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(String(e && e.message));
+}
+
+function popisSitoveChyby() {
+  const { url } = dbAdresa();
+  const host = url.replace(/^https?:\/\//, "") || "databázi";
+  return (
+    "Nepodařilo se spojit s databází (" + host + "). " +
+    "Požadavek vůbec neodešel, takže to není heslem. Bývá to síť, DNS nebo " +
+    "blokující rozšíření prohlížeče — zkus jinou síť nebo anonymní okno."
+  );
+}
+
 async function prihlasSe(email, heslo) {
   const { url, klic } = dbAdresa();
-  const r = await fetch(url + "/auth/v1/token?grant_type=password", {
-    method: "POST",
-    headers: { apikey: klic, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.trim(), password: heslo }),
-  });
+  let r;
+  try {
+    r = await fetch(url + "/auth/v1/token?grant_type=password", {
+      method: "POST",
+      headers: { apikey: klic, "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), password: heslo }),
+    });
+  } catch (e) {
+    if (jeSitovaChyba(e)) throw new Error(popisSitoveChyby());
+    throw e;
+  }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) {
+    const kod = (d && (d.error_code || d.error)) || "";
+    if (DUVODY_PRIHLASENI[kod]) throw new Error(DUVODY_PRIHLASENI[kod]);
     const zprava = (d && (d.error_description || d.msg || d.message)) || "";
-    if (/invalid login/i.test(zprava) || r.status === 400)
-      throw new Error("E-mail nebo heslo nesedí.");
-    throw new Error("Přihlášení se nepovedlo: " + (zprava || r.status));
+    if (/invalid login/i.test(zprava)) throw new Error(DUVODY_PRIHLASENI.invalid_credentials);
+    if (/not confirmed/i.test(zprava)) throw new Error(DUVODY_PRIHLASENI.email_not_confirmed);
+    throw new Error("Přihlášení se nepovedlo (" + r.status + "). " + (zprava || ""));
   }
   ulozRelaci(d, email.trim());
   return RELACE;
@@ -140,24 +177,30 @@ function zachytObnovu() {
   }
 }
 
+// Vrací token, nebo null když databáze relaci odmítla — to je tvrdé
+// odhlášení. Výpadek sítě je něco jiného: relace může být pořád platná,
+// jen se na ni teď nedá zeptat. Proto se síťová chyba vyhodí ven a volající
+// ji odliší od odhlášení.
 async function obnovToken() {
   if (!RELACE || !RELACE.refresh_token) return null;
   const { url, klic } = dbAdresa();
+  let r;
   try {
-    const r = await fetch(url + "/auth/v1/token?grant_type=refresh_token", {
+    r = await fetch(url + "/auth/v1/token?grant_type=refresh_token", {
       method: "POST",
       headers: { apikey: klic, "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: RELACE.refresh_token }),
     });
-    if (!r.ok) {
-      zrusRelaci();
-      return null;
-    }
-    ulozRelaci(await r.json());
-    return RELACE.access_token;
   } catch (e) {
+    if (jeSitovaChyba(e)) throw new Error(popisSitoveChyby());
+    throw e;
+  }
+  if (!r.ok) {
+    zrusRelaci();
     return null;
   }
+  ulozRelaci(await r.json());
+  return RELACE.access_token;
 }
 
 async function platnyToken() {
@@ -177,11 +220,16 @@ const ULOZISTE = (() => {
 
   if (SUPABASE_URL && SUPABASE_KLIC) {
     const zaklad = SUPABASE_URL.replace(/\/$/, "") + "/rest/v1/denik";
+    // Bez tokenu se dotaz neposílá vůbec. Dřív se místo něj podstrčil
+    // veřejný klíč — jenže RLS pouští jen přihlášené a PostgREST na
+    // zamítnuté čtení neodpoví chybou, ale prázdným seznamem se stavem 200.
+    // Aplikace to brala jako „v databázi nic není" a otevřela prázdný deník.
     const hlavicky = async () => {
       const token = await platnyToken();
+      if (!token) throw new Error("Nejsi přihlášená — přihlas se prosím znovu.");
       return {
         apikey: SUPABASE_KLIC,
-        Authorization: "Bearer " + (token || SUPABASE_KLIC),
+        Authorization: "Bearer " + token,
         "Content-Type": "application/json",
       };
     };
@@ -197,20 +245,32 @@ const ULOZISTE = (() => {
     return {
       rezim: "supabase",
       async get(klic) {
-        const r = await fetch(
-          `${zaklad}?klic=eq.${encodeURIComponent(klic)}&select=hodnota`,
-          { headers: await hlavicky() }
-        );
+        const hlav = await hlavicky();
+        let r;
+        try {
+          r = await fetch(
+            `${zaklad}?klic=eq.${encodeURIComponent(klic)}&select=hodnota`,
+            { headers: hlav }
+          );
+        } catch (e) {
+          throw jeSitovaChyba(e) ? new Error(popisSitoveChyby()) : e;
+        }
         if (!r.ok) throw await popisChyby(r, "Čtení z databáze");
         const d = await r.json();
         return d.length ? { key: klic, value: d[0].hodnota } : null;
       },
       async set(klic, hodnota) {
-        const r = await fetch(zaklad, {
-          method: "POST",
-          headers: { ...(await hlavicky()), Prefer: "resolution=merge-duplicates" },
-          body: JSON.stringify({ klic, hodnota }),
-        });
+        const hlav = await hlavicky();
+        let r;
+        try {
+          r = await fetch(zaklad, {
+            method: "POST",
+            headers: { ...hlav, Prefer: "resolution=merge-duplicates" },
+            body: JSON.stringify({ klic, hodnota }),
+          });
+        } catch (e) {
+          throw jeSitovaChyba(e) ? new Error(popisSitoveChyby()) : e;
+        }
         if (!r.ok) throw await popisChyby(r, "Zápis do databáze");
         return { key: klic, value: hodnota };
       },
@@ -1060,30 +1120,70 @@ export default function App() {
   const [obnovaHesla, setObnovaHesla] = useState(() => zachytObnovu());
   const [prihlasena, setPrihlasena] = useState(!!RELACE);
   const [znovu, setZnovu] = useState(0);
+  const [chybaNacteni, setChybaNacteni] = useState("");
 
   useEffect(() => {
+    // Dokud není jisté, kdo je přihlášený, nemá se z databáze na co ptát.
+    if (!prihlasena || obnovaHesla) return;
+    let zruseno = false;
+
     (async () => {
+      setNacteno(false);
+      setChybaNacteni("");
+
+      // Relace uložená v prohlížeči může být dávno neplatná. Ověří se dřív,
+      // než se na ni navěsí čtení dat — jinak by odmítnutí vypadalo
+      // jako prázdná databáze.
+      if (ULOZISTE.rezim === "supabase") {
+        let token;
+        try {
+          token = await platnyToken();
+        } catch (e) {
+          if (zruseno) return;
+          setChybaNacteni(e && e.message ? e.message : "Spojení s databází selhalo.");
+          setNacteno(true);
+          return;
+        }
+        if (zruseno) return;
+        if (!token) {
+          zrusRelaci();
+          setPrihlasena(false);
+          setNacteno(true);
+          return;
+        }
+      }
+
+      // Selhané čtení se odliší od „nic tam není". Chyba se nepolyká —
+      // kdyby se spolkla, otevřel by se prázdný deník a první uložení by
+      // skutečná data v databázi přepsalo.
       let d = null;
       try {
         const r = await ULOZISTE.get(KEY, true);
-        d = r ? JSON.parse(r.value) : null;
-      } catch (e) {}
-      if (!d) {
-        try {
+        if (r) d = JSON.parse(r.value);
+        if (!d) {
           const s2 = await ULOZISTE.get(KEY_V2, true);
           if (s2) d = JSON.parse(s2.value);
-        } catch (e) {}
-      }
-      if (!d) {
-        try {
+        }
+        if (!d) {
           const s1 = await ULOZISTE.get(KEY_STARY, true);
           if (s1) d = migruj(JSON.parse(s1.value));
-        } catch (e) {}
+        }
+      } catch (e) {
+        if (zruseno) return;
+        setChybaNacteni(e && e.message ? e.message : "Data se nepodařilo načíst.");
+        setNacteno(true);
+        return;
       }
+
+      if (zruseno) return;
       setData(migruj2(d || {}));
       setNacteno(true);
     })();
-  }, [znovu]);
+
+    return () => {
+      zruseno = true;
+    };
+  }, [znovu, prihlasena, obnovaHesla]);
 
   const uloz = async (nove) => {
     setData(nove);
@@ -1098,16 +1198,6 @@ export default function App() {
       );
     }
   };
-
-  if (!nacteno)
-    return (
-      <div className="sd">
-        <style>{CSS}</style>
-        <p className="prazdno" style={{ paddingTop: 70 }}>
-          Otevírám deník…
-        </p>
-      </div>
-    );
 
   const odhlas = () => {
     zrusRelaci();
@@ -1127,6 +1217,7 @@ export default function App() {
       />
     );
 
+  // Přihlášení se řeší dřív než data — dokud není, není se koho ptát.
   if (!prihlasena)
     return (
       <Prihlaseni
@@ -1134,6 +1225,27 @@ export default function App() {
           setPrihlasena(true);
           setZnovu((x) => x + 1);
         }}
+      />
+    );
+
+  if (!nacteno)
+    return (
+      <div className="sd">
+        <style>{CSS}</style>
+        <p className="prazdno" style={{ paddingTop: 70 }}>
+          Otevírám deník…
+        </p>
+      </div>
+    );
+
+  // Když se data nepodařilo přečíst, deník se neotevře prázdný. Prázdný
+  // deník vypadá jako ztracená data a první uložení by je opravdu přepsalo.
+  if (chybaNacteni)
+    return (
+      <ChybaNacteni
+        zprava={chybaNacteni}
+        znovu={() => setZnovu((x) => x + 1)}
+        odhlas={odhlas}
       />
     );
 
@@ -1595,6 +1707,48 @@ function Prihlaseni({ onHotovo }) {
             Přihlášení ověřuje databáze, ne aplikace. Bez účtu se k číslům
             nedostane nikdo, ani kdo zná adresu.
           </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Data se nepodařilo přečíst. Vědomě se tu nic nenabízí k zápisu — dokud
+// není jisté, co v databázi je, každé uložení může přepsat něco živého.
+function ChybaNacteni({ zprava, znovu, odhlas }) {
+  return (
+    <div className="sd">
+      <style>{CSS}</style>
+      <div className="brana">
+        <div className="branaKarta">
+          <div className="znacka" style={{ marginBottom: 20 }}>
+            <span className="mark">
+              <Ik d={IKO.stit} c="#B03A2E" s={26} w={2} />
+            </span>
+            <div>
+              <div className="eyebrow">Stavební deník</div>
+              <h1 className="nazev">Data se nenačetla</h1>
+            </div>
+          </div>
+
+          <div className="hlaska zle" style={{ marginTop: 0 }}>
+            {zprava}
+          </div>
+
+          <p className="pozn">
+            Deník se schválně neotevřel prázdný. Prázdný deník vypadá jako
+            ztracená data a první uložení by ta skutečná v databázi přepsalo.
+            V databázi je zatím všechno tak, jak to bylo.
+          </p>
+
+          <div className="rada" style={{ marginTop: 14 }}>
+            <button className="btn" onClick={znovu}>
+              Zkusit znovu
+            </button>
+            <button className="btn2" onClick={odhlas}>
+              Odhlásit se
+            </button>
+          </div>
         </div>
       </div>
     </div>
