@@ -2,6 +2,10 @@ node_modules/
 .DS_Store
 *.log
 
+# Dočasný výstup testů — sestavené balíky s exporty.
+tests/.docasne/
+src/__test-export.jsx
+
 # ── Nesmí do veřejného repozitáře ──────────────────────────────
 # Repozitář je veřejný. Cokoli tady se dá dohledat i po smazání,
 # protože zůstane v historii — proto se to sem nesmí dostat ani jednou.
