@@ -1,0 +1,5 @@
+{
+  "editor.formatOnSave": false,
+  "files.eol": "\n",
+  "search.exclude": { "**/node_modules": true, "docs/app.js": true }
+}

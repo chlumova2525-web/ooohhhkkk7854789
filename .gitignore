@@ -1,0 +1,15 @@
+node_modules/
+.DS_Store
+*.log
+
+# ── Nesmí do veřejného repozitáře ──────────────────────────────
+# Repozitář je veřejný. Cokoli tady se dá dohledat i po smazání,
+# protože zůstane v historii — proto se to sem nesmí dostat ani jednou.
+
+# Záloha dat: reálné částky, faktury, výplaty, jména.
+data/
+
+# Předávací dokumentace: názvy firem, IČO, stavy účtů, přístupy.
+README.md
+PROMPT-CLAUDE-CODE.md
+NAVOD-VSCODE.md
