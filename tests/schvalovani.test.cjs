@@ -20,13 +20,18 @@ module.exports = {
     const kRozpaduPuvodne = data.polozky.filter((p) => p.kRozpadu).length;
     const soucet = (d) => Math.round(d.polozky.reduce((a, p) => a + (Number(p.castka) || 0), 0));
 
+    // První uložení jde POSTem, další PATCHem s kontrolou verze.
     const zapsano = [];
     const stub = (u, o) => {
-      if (u.includes("/rest/v1/denik") && o && o.method === "POST") {
-        zapsano.push(JSON.parse(JSON.parse(o.body).hodnota));
-        return odpoved(201, {});
+      const zapis = o && (o.method === "POST" || o.method === "PATCH");
+      if (u.includes("/rest/v1/denik") && zapis) {
+        const telo = JSON.parse(o.body);
+        zapsano.push(JSON.parse(telo.hodnota));
+        return odpoved(200, [{ klic: "rekonstrukce-v3", hodnota: telo.hodnota, zmeneno: telo.zmeneno }]);
       }
-      if (u.includes("/rest/v1/denik")) return odpoved(200, [{ hodnota: JSON.stringify(data) }]);
+      if (u.includes("/rest/v1/denik")) {
+        return odpoved(200, [{ hodnota: JSON.stringify(data), zmeneno: "2026-09-21T08:00:00+00:00" }]);
+      }
       return odpoved(200, []);
     };
 

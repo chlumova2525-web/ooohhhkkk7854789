@@ -253,12 +253,15 @@ const ULOZISTE = (() => {
     };
     return {
       rezim: "supabase",
+      // Vrací i `zmeneno` z databáze. Slouží jako otisk verze: při ukládání
+      // se ověří, že se řádek mezitím nezměnil pod rukama. Když sloupec
+      // v tabulce není, zůstane undefined a ochrana se prostě nepoužije.
       async get(klic) {
         const hlav = await hlavicky();
         let r;
         try {
           r = await fetch(
-            `${zaklad}?klic=eq.${encodeURIComponent(klic)}&select=hodnota`,
+            `${zaklad}?klic=eq.${encodeURIComponent(klic)}&select=*`,
             { headers: hlav }
           );
         } catch (e) {
@@ -266,22 +269,79 @@ const ULOZISTE = (() => {
         }
         if (!r.ok) throw await popisChyby(r, "Čtení z databáze");
         const d = await r.json();
-        return d.length ? { key: klic, value: d[0].hodnota } : null;
+        return d.length ? { key: klic, value: d[0].hodnota, zmeneno: d[0].zmeneno } : null;
       },
-      async set(klic, hodnota) {
+
+      // `ocekavane` je otisk verze, nad kterou uživatel pracoval.
+      // Když sedí, zápis projde. Když ne, někdo mezitím uložil něco jiného
+      // a přepsat by znamenalo jeho práci zahodit — proto se to ohlásí.
+      // `prepis: true` tu pojistku vědomě obejde.
+      async set(klic, hodnota, { ocekavane, prepis } = {}) {
         const hlav = await hlavicky();
+        const ted = new Date().toISOString();
+        const podminene = ocekavane && !prepis;
+
         let r;
         try {
-          r = await fetch(zaklad, {
-            method: "POST",
-            headers: { ...hlav, Prefer: "resolution=merge-duplicates" },
-            body: JSON.stringify({ klic, hodnota }),
-          });
+          r = podminene
+            ? await fetch(
+                `${zaklad}?klic=eq.${encodeURIComponent(klic)}` +
+                  `&zmeneno=eq.${encodeURIComponent(ocekavane)}`,
+                {
+                  method: "PATCH",
+                  headers: { ...hlav, Prefer: "return=representation" },
+                  body: JSON.stringify({ hodnota, zmeneno: ted }),
+                }
+              )
+            : await fetch(zaklad, {
+                method: "POST",
+                headers: {
+                  ...hlav,
+                  Prefer: "resolution=merge-duplicates,return=representation",
+                },
+                body: JSON.stringify({ klic, hodnota, zmeneno: ted }),
+              });
         } catch (e) {
           throw jeSitovaChyba(e) ? new Error(popisSitoveChyby()) : e;
         }
         if (!r.ok) throw await popisChyby(r, "Zápis do databáze");
-        return { key: klic, value: hodnota };
+
+        let radky = [];
+        try {
+          radky = await r.json();
+        } catch (e) {}
+
+        if (podminene && (!Array.isArray(radky) || radky.length === 0)) {
+          // Podmínka nic netrefila. Ještě to nemusí být konflikt — mohlo
+          // selhat porovnání časového otisku. Kdyby se to nerozlišilo,
+          // hlásila by aplikace konflikt při každém uložení a ukládat by
+          // v podstatě nešlo. Rozhodne až skutečný stav řádku.
+          let skutecna;
+          try {
+            const k = await fetch(
+              `${zaklad}?klic=eq.${encodeURIComponent(klic)}&select=*`,
+              { headers: hlav }
+            );
+            if (k.ok) {
+              const d = await k.json();
+              skutecna = d.length ? d[0].zmeneno : null;
+            }
+          } catch (e) {}
+
+          if (skutecna !== undefined && skutecna === ocekavane) {
+            // Verze v databázi je pořád ta naše, takže o konflikt nešlo.
+            return await this.set(klic, hodnota, { prepis: true });
+          }
+
+          const chyba = new Error(
+            "Někdo jiný mezitím uložil změnu. Tvoje úprava se zatím nezapsala."
+          );
+          chyba.konflikt = true;
+          throw chyba;
+        }
+
+        const novy = Array.isArray(radky) && radky[0] ? radky[0] : null;
+        return { key: klic, value: hodnota, zmeneno: (novy && novy.zmeneno) || ted };
       },
       async delete(klic) {
         await fetch(`${zaklad}?klic=eq.${encodeURIComponent(klic)}`, {
@@ -390,6 +450,10 @@ export default function App() {
   const [prihlasena, setPrihlasena] = useState(!!RELACE);
   const [znovu, setZnovu] = useState(0);
   const [chybaNacteni, setChybaNacteni] = useState("");
+  const [konflikt, setKonflikt] = useState(null);
+  // Otisk verze, nad kterou se pracuje. Ref, ne stav — mění se při každém
+  // uložení a překreslovat se kvůli tomu nemá co.
+  const verzeRef = useRef(null);
 
   useEffect(() => {
     // Dokud není jisté, kdo je přihlášený, nemá se z databáze na co ptát.
@@ -426,9 +490,10 @@ export default function App() {
       // kdyby se spolkla, otevřel by se prázdný deník a první uložení by
       // skutečná data v databázi přepsalo.
       let d = null;
+      let verze = null;
       try {
         const r = await ULOZISTE.get(KEY, true);
-        if (r) d = JSON.parse(r.value);
+        if (r) { d = JSON.parse(r.value); verze = r.zmeneno || null; }
         if (!d) {
           const s2 = await ULOZISTE.get(KEY_V2, true);
           if (s2) d = JSON.parse(s2.value);
@@ -445,6 +510,8 @@ export default function App() {
       }
 
       if (zruseno) return;
+      verzeRef.current = verze;
+      setKonflikt(null);
       setData(migruj2(d || {}));
       setNacteno(true);
     })();
@@ -454,12 +521,25 @@ export default function App() {
     };
   }, [znovu, prihlasena, obnovaHesla]);
 
-  const uloz = async (nove) => {
+  // Ukládá se celý stav najednou a platí „poslední zápis vyhrává“.
+  // Aby druhý člověk nepřepsal práci prvního, posílá se s sebou otisk
+  // verze, nad kterou se pracovalo. Při nesouladu se nic nezapíše
+  // a uživatel se rozhodne, co dál.
+  const uloz = async (nove, { prepis } = {}) => {
     setData(nove);
     try {
-      await ULOZISTE.set(KEY, JSON.stringify(nove), true);
+      const r = await ULOZISTE.set(KEY, JSON.stringify(nove), {
+        ocekavane: verzeRef.current,
+        prepis,
+      });
+      verzeRef.current = (r && r.zmeneno) || verzeRef.current;
+      setKonflikt(null);
       setChyba("");
     } catch (e) {
+      if (e && e.konflikt) {
+        setKonflikt({ nove });
+        return;
+      }
       setChyba(
         "Pozor: data se nepodařilo uložit — " +
           (e && e.message ? e.message : "neznámá chyba") +
@@ -515,6 +595,19 @@ export default function App() {
         zprava={chybaNacteni}
         znovu={() => setZnovu((x) => x + 1)}
         odhlas={odhlas}
+      />
+    );
+
+  // Někdo jiný uložil dřív. Nechat uživatele dál editovat by znamenalo
+  // vršit změny nad verzí, která už v databázi není.
+  if (konflikt)
+    return (
+      <Konflikt
+        nactiZnovu={() => {
+          setKonflikt(null);
+          setZnovu((x) => x + 1);
+        }}
+        prepis={() => uloz(konflikt.nove, { prepis: true })}
       />
     );
 
@@ -866,6 +959,65 @@ function ChybaNacteni({ zprava, znovu, odhlas }) {
             <button className="btn2" onClick={odhlas}>
               Odhlásit se
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Dva lidé uložili nad stejnou verzí. Záměrně to nic nerozhoduje samo —
+// sloučit obě verze nejde, ukládá se vždycky celý deník najednou.
+function Konflikt({ nactiZnovu, prepis }) {
+  const [ptam, setPtam] = useState(false);
+  return (
+    <div className="sd">
+      <style>{CSS}</style>
+      <div className="brana">
+        <div className="branaKarta">
+          <div className="znacka" style={{ marginBottom: 20 }}>
+            <span className="mark">
+              <Ik d={IKO.stit} c="#B46617" s={26} w={2} />
+            </span>
+            <div>
+              <div className="eyebrow">Stavební deník</div>
+              <h1 className="nazev">Někdo byl rychlejší</h1>
+            </div>
+          </div>
+
+          <div className="hlaska" style={{ marginTop: 0 }}>
+            Mezitím, co jsi pracovala, uložil deník někdo jiný — nejspíš
+            z druhého zařízení. <b>Tvoje poslední úprava se nezapsala.</b>
+          </div>
+
+          <p className="pozn">
+            Ukládá se vždycky celý deník najednou, takže obě verze sloučit
+            nejde. Buď si načteš jejich verzi a svou změnu uděláš znovu,
+            nebo prosadíš svoji — ale jejich zápis tím zmizí.
+          </p>
+
+          <div className="rada" style={{ marginTop: 14 }}>
+            <button className="btn" onClick={nactiZnovu}>
+              Načíst jejich verzi
+            </button>
+            {!ptam ? (
+              <button className="btn2" onClick={() => setPtam(true)}>
+                Prosadit moji verzi
+              </button>
+            ) : (
+              <>
+                <button
+                  className="btn2"
+                  style={{ background: "#F7DED9", color: "#B03A2E" }}
+                  onClick={prepis}
+                >
+                  Opravdu přepsat jejich změnu?
+                </button>
+                <button className="btn2" onClick={() => setPtam(false)}>
+                  Zrušit
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
