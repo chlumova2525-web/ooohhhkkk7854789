@@ -3,7 +3,7 @@ import { DUM_OBRAZEK } from "./obrazek-dum.js";
 import { CSS } from "./styly.js";
 import { IKO, Ik } from "./ikony.jsx";
 import {
-  kc, kcKratce, dnes, datumCz, cislo, uid, jeProplaceno, sazbaPracanta, castkaZaHodiny, hodinyCelkem, MESICE_CZ, mesicNazev, popisUctu, zustatekCelkem
+  kc, kcKratce, dnes, datumCz, cislo, uid, jeProplaceno, sazbaPracanta, castkaZaHodiny, hodinyCelkem, dnyObdobi, MESICE_CZ, mesicNazev, popisUctu, zustatekCelkem
 } from "./vypocty.js";
 import {
   TEMATA, DEFAULT, ZDROJ, STAV, TYP_Z, PLAN_HYPOTEKA, DLUH_SEZNAM, dluhZeSeznamu, FAKTURY_ZADANE, PLATBY_ZADANE, seedPlatby, seedFaktury, rozpadDluhu, KATEGORIE_NAVIC, planNaUkoly, KONTROLA_KLICE, migrujKontrolu, migruj2, migruj, spocitej, spocitejDelnika
@@ -4433,6 +4433,13 @@ function Delnik({ data, uloz, v }) {
           <b>Zapsat práci</b>
           <small>za něj, bez schvalování</small>
         </button>
+        <button className="velkytlac" onClick={() => setAkce("praceObdobi")}>
+          <span className="vikona" style={{ background: "#F1E8D8" }}>
+            <Ik d={IKO.hodiny} c="#8A6A3C" s={22} />
+          </span>
+          <b>Zapsat práci za období</b>
+          <small>stejné hodiny na víc dní naráz</small>
+        </button>
         <button className="velkytlac" onClick={() => setAkce("faktura")}>
           <span className="vikona" style={{ background: "#F7E7D6" }}>
             <Ik d={IKO.ucet} c="#B46617" s={22} />
@@ -4452,6 +4459,7 @@ function Delnik({ data, uloz, v }) {
       <div ref={formRef} style={{ scrollMarginTop: 70 }}>
         {akce === "platba" && <FormPlatba data={data} uloz={uloz} s={s} zavri={zavri} />}
         {akce === "prace" && <FormPraceZaNej data={data} uloz={uloz} s={s} zavri={zavri} />}
+        {akce === "praceObdobi" && <FormPraceObdobi data={data} uloz={uloz} zavri={zavri} />}
         {akce === "faktura" && <FormFakturaZaNej data={data} uloz={uloz} zavri={zavri} />}
         {akce === "dluh" && <FormDluh data={data} uloz={uloz} s={s} zavri={zavri} />}
       </div>
@@ -4891,6 +4899,154 @@ function FormPlatba({ data, uloz, s, zavri }) {
       <div className="rada">
         <button className="btn" onClick={zapis} disabled={odeslano <= 0 && zDluhu <= 0}>
           Zapsat platbu
+        </button>
+        <button className="btn2" onClick={zavri}>
+          Zrušit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Zápis stejných hodin na víc dní naráz. Po jednom dni se 1 238 hodin
+// zapisovat nedá — a právě tolik je potřeba doložit.
+function FormPraceObdobi({ data, uloz, zavri }) {
+  const [f, setF] = useState({
+    od: dnes(),
+    do: dnes(),
+    ukol: "",
+    popis: "",
+    jenVsedni: true,
+  });
+  const [hodiny, setHodiny] = useState({});
+
+  const dny = dnyObdobi(f.od, f.do, f.jenVsedni);
+  const naDen = hodinyCelkem(hodiny);
+  const castkaDen = castkaZaHodiny(data, hodiny);
+  const hodinCelkem = naDen * dny.length;
+  const castkaCelkem = castkaDen * dny.length;
+  const lzeZapsat = dny.length > 0 && naDen > 0;
+
+  const zapis = () => {
+    if (!lzeZapsat) return;
+    const cisty = {};
+    (data.pracanti || []).forEach((p) => {
+      const h = cislo(hodiny[p.id]);
+      if (h > 0) cisty[p.id] = h;
+    });
+    const nove = dny.map((den) => ({
+      id: uid(),
+      datum: den,
+      typ: "prace",
+      popis: f.popis.trim() || "práce",
+      stavPrace: "",
+      ukol: f.ukol || null,
+      castka: castkaZaHodiny(data, cisty),
+      hodiny: cisty,
+      zdroj: "hypoteka",
+    }));
+    uloz({ ...data, zaznamy: [...data.zaznamy, ...nove] });
+    zavri();
+  };
+
+  return (
+    <div className="box" style={{ borderLeft: "5px solid #C9AE85" }}>
+      <h2 className="boxh">
+        <span className="hi">
+          <i>
+            <Ik d={IKO.hodiny} c="#0C3B2E" s={16} />
+          </i>
+          Práce za období
+        </span>
+        <button className="x" onClick={zavri} aria-label="Zavřít">
+          ×
+        </button>
+      </h2>
+
+      <p className="pozn" style={{ marginTop: 0 }}>
+        Vytvoří jeden zápis na každý den v období, všechny se stejnými
+        hodinami. Jednotlivé dny se pak dají upravit nebo smazat zvlášť.
+      </p>
+
+      <div className="form">
+        <div className="pole">
+          <label>Od</label>
+          <input type="date" value={f.od} onChange={(e) => setF({ ...f, od: e.target.value })} />
+        </div>
+        <div className="pole">
+          <label>Do</label>
+          <input type="date" value={f.do} onChange={(e) => setF({ ...f, do: e.target.value })} />
+        </div>
+        <div className="pole" style={{ gridColumn: "span 2" }}>
+          <label>Kategorie</label>
+          <VyberKategorie
+            ukoly={data.ukoly}
+            hodnota={f.ukol}
+            onZmena={(id) => setF({ ...f, ukol: id })}
+          />
+        </div>
+        <div className="pole" style={{ gridColumn: "span 2" }}>
+          <label>Popis</label>
+          <input
+            value={f.popis}
+            placeholder="např. zdění příček"
+            onChange={(e) => setF({ ...f, popis: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <label className="chk" style={{ marginTop: 12 }}>
+        <input
+          type="checkbox"
+          checked={f.jenVsedni}
+          onChange={(e) => setF({ ...f, jenVsedni: e.target.checked })}
+        />
+        Jen pracovní dny (bez sobot a nedělí)
+      </label>
+
+      <h3 className="eyebrow" style={{ marginTop: 18, marginBottom: 8 }}>
+        Hodin za jeden den
+      </h3>
+      <div className="form">
+        {(data.pracanti || [])
+          .filter((p) => p.aktivni !== false)
+          .map((p) => (
+            <div className="pole" key={p.id}>
+              <label>{p.jmeno}</label>
+              <input
+                className="n"
+                inputMode="decimal"
+                placeholder="0"
+                value={hodiny[p.id] || ""}
+                onChange={(e) => setHodiny({ ...hodiny, [p.id]: e.target.value })}
+              />
+            </div>
+          ))}
+      </div>
+
+      {dny.length > 0 && naDen > 0 ? (
+        <div className="hlaska dobre">
+          <b>
+            {dny.length} {dny.length === 1 ? "den" : dny.length < 5 ? "dny" : "dní"} ×{" "}
+            {naDen} h = {hodinCelkem} h
+          </b>
+          <span style={{ display: "block", marginTop: 4 }}>
+            Celkem <b className="n">{kc(castkaCelkem)}</b>, od{" "}
+            {datumCz(dny[0])} do {datumCz(dny[dny.length - 1])}. O tuhle
+            částku klesne nedoložená část plateb.
+          </span>
+        </div>
+      ) : (
+        <div className="hlaska">
+          {dny.length === 0
+            ? "Vyber období — datum „do“ musí být stejné nebo pozdější než „od“."
+            : "Vyplň, kolik hodin denně se odpracovalo."}
+        </div>
+      )}
+
+      <div className="rada" style={{ marginTop: 12 }}>
+        <button className="btn" onClick={zapis} disabled={!lzeZapsat}>
+          {lzeZapsat ? "Zapsat " + dny.length + "× do deníku" : "Zapsat do deníku"}
         </button>
         <button className="btn2" onClick={zavri}>
           Zrušit

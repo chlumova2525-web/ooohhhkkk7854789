@@ -15,6 +15,24 @@ export const kcKratce = (n) =>
 
 export const dnes = () => new Date().toISOString().slice(0, 10);
 
+// Dny v období od–do včetně obou konců, jako "2026-03-01".
+// `jenVsedni` vynechá soboty a neděle. Počítá se v UTC, aby letní čas
+// nikde nepřeskočil ani nezdvojil den.
+export function dnyObdobi(od, doD, jenVsedni) {
+  if (!od || !doD) return [];
+  const a = new Date(od + "T12:00:00Z");
+  const b = new Date(doD + "T12:00:00Z");
+  if (isNaN(a) || isNaN(b) || a > b) return [];
+  const dny = [];
+  for (let d = a; d <= b; d.setUTCDate(d.getUTCDate() + 1)) {
+    const den = d.getUTCDay();
+    if (jenVsedni && (den === 0 || den === 6)) continue;
+    dny.push(d.toISOString().slice(0, 10));
+    if (dny.length > 2000) break;
+  }
+  return dny;
+}
+
 export const datumCz = (d) => {
   if (!d) return "";
   const [r, m, den] = d.split("-");
