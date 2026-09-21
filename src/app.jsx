@@ -350,6 +350,23 @@ const ULOZISTE = (() => {
         });
         return { key: klic, deleted: true };
       },
+      // Klíče začínající na `predpona`, bez hodnot — seznam záloh
+      // nemá proč tahat i jejich obsah.
+      async seznam(predpona) {
+        const hlav = await hlavicky();
+        let r;
+        try {
+          r = await fetch(
+            `${zaklad}?klic=like.${encodeURIComponent(predpona + "%")}&select=klic`,
+            { headers: hlav }
+          );
+        } catch (e) {
+          throw jeSitovaChyba(e) ? new Error(popisSitoveChyby()) : e;
+        }
+        if (!r.ok) throw await popisChyby(r, "Čtení seznamu z databáze");
+        const d = await r.json();
+        return (Array.isArray(d) ? d : []).map((x) => x.klic).sort();
+      },
     };
   }
 
@@ -371,8 +388,48 @@ const ULOZISTE = (() => {
       localStorage.removeItem("sd:" + klic);
       return { key: klic, deleted: true };
     },
+    async seznam(predpona) {
+      const nalezene = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i) || "";
+        if (k.startsWith("sd:" + predpona)) nalezene.push(k.slice(3));
+      }
+      return nalezene.sort();
+    },
   };
 })();
+
+// ── Automatická záloha ──────────────────────────────────────────
+// Historie se nikde nevede a uloz() přepíše celý řádek, takže omyl
+// z minulého týdne se nedá vzít zpět. Jednou denně se proto odloží
+// kopie stavu do téže tabulky pod klíč zaloha:RRRR-MM-DD. Je to řádek
+// jako každý jiný, takže se na něj vztahuje stejné RLS pravidlo
+// a nepotřebuje to žádný zásah v databázi.
+//
+// Fotky faktur (klíče fa:<id>) se nekopírují — stejně jako u ruční zálohy.
+const ZALOHA_PREDPONA = "zaloha:";
+const ZALOH_NECHAT = 14;
+const ZALOHA_ZNACKA = "sd:zalohovanoDne";
+
+async function zalohujDenne(json) {
+  if (!ULOZISTE.seznam) return;
+  const den = dnes();
+  try {
+    if (localStorage.getItem(ZALOHA_ZNACKA) === den) return;
+  } catch (e) {}
+
+  await ULOZISTE.set(ZALOHA_PREDPONA + den, json);
+  try {
+    localStorage.setItem(ZALOHA_ZNACKA, den);
+  } catch (e) {}
+
+  // Staré kopie se uklidí hned, ať jich nepřibývá donekonečna.
+  try {
+    const vsechny = await ULOZISTE.seznam(ZALOHA_PREDPONA);
+    const stare = vsechny.sort().slice(0, Math.max(0, vsechny.length - ZALOH_NECHAT));
+    for (const k of stare) await ULOZISTE.delete(k);
+  } catch (e) {}
+}
 
 
 const KEY = "rekonstrukce-v3";
@@ -535,6 +592,9 @@ export default function App() {
       verzeRef.current = (r && r.zmeneno) || verzeRef.current;
       setKonflikt(null);
       setChyba("");
+      // Záloha je pojistka navíc. Kdyby selhala, samotné uložení tím
+      // padnout nesmí — uživateli se nic nehlásí.
+      zalohujDenne(JSON.stringify(nove)).catch(() => {});
     } catch (e) {
       if (e && e.konflikt) {
         setKonflikt({ nove });
@@ -1022,6 +1082,97 @@ function Konflikt({ nactiZnovu, prepis }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// Seznam denních kopií, které si aplikace odkládá sama.
+// Ruční záloha zůstává — tahle je pojistka pro případ, že si na ni
+// někdo nevzpomene, což je většinou.
+function AutomatickeZalohy({ data, uloz }) {
+  const [dny, setDny] = useState(null);
+  const [chyba, setChyba] = useState("");
+  const [potvrzuji, setPotvrzuji] = useState("");
+  const [pracuji, setPracuji] = useState("");
+
+  const nacti = () => {
+    if (!ULOZISTE.seznam) return setDny([]);
+    ULOZISTE.seznam(ZALOHA_PREDPONA)
+      .then((k) => setDny(k.map((x) => x.slice(ZALOHA_PREDPONA.length)).sort().reverse()))
+      .catch((e) => setChyba(e && e.message ? e.message : "Seznam záloh se nepodařilo načíst."));
+  };
+  useEffect(nacti, []);
+
+  const obnov = async (den) => {
+    setPracuji(den);
+    setChyba("");
+    try {
+      const r = await ULOZISTE.get(ZALOHA_PREDPONA + den, true);
+      if (!r) throw new Error("Záloha z " + datumCz(den) + " se nenašla.");
+      const nove = JSON.parse(r.value);
+      if (!nove || typeof nove !== "object") throw new Error("Záloha je poškozená.");
+      uloz(migruj2({ ...nove, heslo: data.heslo }));
+      setPotvrzuji("");
+    } catch (e) {
+      setChyba(e && e.message ? e.message : "Obnova se nepovedla.");
+    }
+    setPracuji("");
+  };
+
+  return (
+    <>
+      <h3 className="eyebrow" style={{ marginTop: 20, marginBottom: 8 }}>
+        Automatické zálohy
+      </h3>
+      <p className="pozn" style={{ marginTop: 0 }}>
+        Jednou denně si aplikace odloží kopii stavu. Drží se posledních{" "}
+        {ZALOH_NECHAT} dní, starší se mažou samy. Fotky faktur v nich nejsou.
+      </p>
+
+      {dny === null && <p className="prazdno">Načítám…</p>}
+      {dny !== null && dny.length === 0 && (
+        <p className="prazdno">
+          Zatím žádná. První vznikne při nejbližší změně v deníku.
+        </p>
+      )}
+
+      {dny !== null && dny.length > 0 && (
+        <table className="t">
+          <tbody>
+            {dny.map((den) => (
+              <tr key={den}>
+                <td className="n nowrap">{datumCz(den)}</td>
+                <td style={{ color: "#5E7268" }}>
+                  {den === dnes() ? "dnes" : ""}
+                </td>
+                <td className="r">
+                  {potvrzuji === den ? (
+                    <span className="rada" style={{ justifyContent: "flex-end" }}>
+                      <button
+                        className="btn2"
+                        style={{ background: "#F7DED9", color: "#B03A2E" }}
+                        disabled={!!pracuji}
+                        onClick={() => obnov(den)}
+                      >
+                        {pracuji === den ? "Obnovuji…" : "Opravdu přepsat?"}
+                      </button>
+                      <button className="btn2" onClick={() => setPotvrzuji("")}>
+                        Zrušit
+                      </button>
+                    </span>
+                  ) : (
+                    <button className="btn2" onClick={() => setPotvrzuji(den)}>
+                      Obnovit
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {chyba && <div className="hlaska zle">{chyba}</div>}
+    </>
   );
 }
 
@@ -8192,6 +8343,8 @@ function Nastaveni({ data, uloz, odhlas }) {
             onClick={(e) => e.target.select()}
           />
         )}
+
+        <AutomatickeZalohy data={data} uloz={uloz} />
 
         <h3 className="eyebrow" style={{ marginTop: 20, marginBottom: 8 }}>
           Obnovit ze zálohy

@@ -2,7 +2,7 @@
 // nešly z ní dostat jinak než úplným rozepsáním do kategorií.
 // Mazání musí vždycky chtít potvrzení a bez něj nesmí nic uložit.
 
-const { spustAplikaci, odpoved, zaloha, maZalohu, RELACE_PLATNA } = require("./_pomocnici.cjs");
+const { spustAplikaci, odpoved, zaloha, maZalohu, RELACE_PLATNA, jeZapis, jeZapisDeniku } = require("./_pomocnici.cjs");
 
 module.exports = {
   nazev: "Obrazovka Ke schválení",
@@ -21,18 +21,16 @@ module.exports = {
     const soucet = (d) => Math.round(d.polozky.reduce((a, p) => a + (Number(p.castka) || 0), 0));
 
     // První uložení jde POSTem, další PATCHem s kontrolou verze.
+    // Denní záloha se do počtu nepočítá, je to zápis pod jiným klíčem.
     const zapsano = [];
     const stub = (u, o) => {
-      const zapis = o && (o.method === "POST" || o.method === "PATCH");
-      if (u.includes("/rest/v1/denik") && zapis) {
+      if (!u.includes("/rest/v1/denik")) return odpoved(200, []);
+      if (jeZapis(o)) {
         const telo = JSON.parse(o.body);
-        zapsano.push(JSON.parse(telo.hodnota));
-        return odpoved(200, [{ klic: "rekonstrukce-v3", hodnota: telo.hodnota, zmeneno: telo.zmeneno }]);
+        if (jeZapisDeniku(u, o)) zapsano.push(JSON.parse(telo.hodnota));
+        return odpoved(200, [{ hodnota: telo.hodnota, zmeneno: telo.zmeneno }]);
       }
-      if (u.includes("/rest/v1/denik")) {
-        return odpoved(200, [{ hodnota: JSON.stringify(data), zmeneno: "2026-09-21T08:00:00+00:00" }]);
-      }
-      return odpoved(200, []);
+      return odpoved(200, [{ hodnota: JSON.stringify(data), zmeneno: "2026-09-21T08:00:00+00:00" }]);
     };
 
     const a = await spustAplikaci({ relace: RELACE_PLATNA, fetchStub: stub, cekat: 1000 });

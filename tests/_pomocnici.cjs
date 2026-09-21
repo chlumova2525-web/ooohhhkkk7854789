@@ -137,6 +137,28 @@ const odpoved = (status, telo) => Promise.resolve({
 // Přesně to, co udělá prohlížeč při ERR_NAME_NOT_RESOLVED nebo blokaci.
 const sitovaChyba = () => Promise.reject(new TypeError("Failed to fetch"));
 
+const KLIC_DENIKU = "rekonstrukce-v3";
+
+// Aplikace zapisuje do téže tabulky i denní zálohy pod klíčem
+// zaloha:RRRR-MM-DD. Testy, které počítají uložení deníku, musí obojí
+// rozlišit — jinak jim do počtu spadne i záloha.
+function jeZapis(o) {
+  return !!o && (o.method === "POST" || o.method === "PATCH");
+}
+
+function klicZapisu(u, o) {
+  const m = String(u).match(/klic=eq\.([^&]*)/);
+  if (m) return decodeURIComponent(m[1]);
+  try {
+    return JSON.parse(o.body).klic || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const jeZapisDeniku = (u, o) => jeZapis(o) && klicZapisu(u, o) === KLIC_DENIKU;
+const jeZapisZalohy = (u, o) => jeZapis(o) && String(klicZapisu(u, o) || "").startsWith("zaloha:");
+
 const RELACE_PLATNA = { access_token: "tok", refresh_token: "ref", platiDo: Date.now() + 3600e3, email: "test@example.invalid" };
 const RELACE_VYPRSELA = { access_token: "stary", refresh_token: "ref", platiDo: Date.now() - 1000, email: "test@example.invalid" };
 
@@ -157,5 +179,6 @@ module.exports = {
   nactiZeZdroje, pripravProhlizec, zaloha, maZalohu,
   spustAplikaci, odpoved, sitovaChyba,
   RELACE_PLATNA, RELACE_VYPRSELA,
+  KLIC_DENIKU, jeZapis, klicZapisu, jeZapisDeniku, jeZapisZalohy,
   sada,
 };

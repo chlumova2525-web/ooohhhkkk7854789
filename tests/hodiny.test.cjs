@@ -1,7 +1,9 @@
 // Hromadný zápis hodin za období. Nedoložených 309 478 Kč je asi
 // 1 238 hodin — po jednom dni to nikdo zapisovat nebude.
 
-const { nactiZeZdroje, spustAplikaci, odpoved, zaloha, maZalohu, RELACE_PLATNA } = require("./_pomocnici.cjs");
+const {
+  nactiZeZdroje, spustAplikaci, odpoved, zaloha, maZalohu, RELACE_PLATNA, jeZapis, jeZapisDeniku,
+} = require("./_pomocnici.cjs");
 
 module.exports = {
   nazev: "Zápis hodin za období",
@@ -46,7 +48,7 @@ module.exports = {
       const metoda = (o && o.method) || "GET";
       if (metoda === "GET") return odpoved(200, [{ hodnota: JSON.stringify(data), zmeneno: "2026-09-21T08:00:00+00:00" }]);
       const telo = JSON.parse(o.body);
-      zapsano.push(JSON.parse(telo.hodnota));
+      if (jeZapisDeniku(u, o)) zapsano.push(JSON.parse(telo.hodnota));
       return odpoved(200, [{ hodnota: telo.hodnota, zmeneno: telo.zmeneno }]);
     };
 
@@ -71,7 +73,7 @@ module.exports = {
     await a.pockej(300);
 
     // kc() formátuje přes Intl, takže oddělovač tisíců je nezlomitelná mezera.
-    const nahled = a.text().replace(/ /g, " ");
+    const nahled = a.text().replace(/\u00a0/g, " ");
     t.ok(/5 dní × 8 h = 40 h/.test(nahled), "náhled říká 5 dní × 8 h = 40 h");
     t.ok(/10 000 Kč/.test(nahled), "a spočítá 40 h × 250 Kč = 10 000 Kč");
 

@@ -3,7 +3,9 @@
 // přepsal práci prvního. S sebou proto jde otisk verze (sloupec zmeneno)
 // a při nesouladu se nic nezapíše.
 
-const { spustAplikaci, odpoved, zaloha, maZalohu, RELACE_PLATNA } = require("./_pomocnici.cjs");
+const {
+  spustAplikaci, odpoved, zaloha, maZalohu, RELACE_PLATNA, jeZapisDeniku,
+} = require("./_pomocnici.cjs");
 
 const VERZE_PUVODNI = "2026-09-21T08:00:00+00:00";
 
@@ -24,8 +26,9 @@ function databaze(data, { konflikt = false } = {}) {
       return odpoved(200, [{ klic: "rekonstrukce-v3", hodnota: JSON.stringify(data), zmeneno: verze }]);
     }
     const telo = JSON.parse(o.body);
-    zapisy.push({ metoda, url: u, telo });
-    if (metoda === "PATCH" && konflikt) return odpoved(200, []); // nic netrefilo
+    // Denní záloha jde pod jiný klíč a do sledovaných zápisů nepatří.
+    if (jeZapisDeniku(u, o)) zapisy.push({ metoda, url: u, telo });
+    if (metoda === "PATCH" && konflikt && jeZapisDeniku(u, o)) return odpoved(200, []);
     return odpoved(200, [{ klic: "rekonstrukce-v3", hodnota: telo.hodnota, zmeneno: telo.zmeneno }]);
   };
   return { obsluha, zapisy };
@@ -112,7 +115,7 @@ module.exports = {
           return odpoved(200, [{ hodnota: JSON.stringify(zaklad), zmeneno: VERZE_PUVODNI }]);
         }
         const telo = JSON.parse(o.body);
-        zapisy.push({ metoda, url: u });
+        if (jeZapisDeniku(u, o)) zapisy.push({ metoda, url: u });
         if (metoda === "PATCH") return odpoved(200, []);
         return odpoved(200, [{ hodnota: telo.hodnota, zmeneno: telo.zmeneno }]);
       };
@@ -130,7 +133,7 @@ module.exports = {
         if (!u.includes("/rest/v1/denik")) return odpoved(200, []);
         const metoda = (o && o.method) || "GET";
         if (metoda === "GET") return odpoved(200, [{ hodnota: JSON.stringify(zaklad) }]);
-        zapisy.push({ metoda, url: u });
+        if (jeZapisDeniku(u, o)) zapisy.push({ metoda, url: u });
         return odpoved(200, [{ hodnota: "{}" }]);
       };
       const a = await otevriAZmen({ obsluha, zapisy });
