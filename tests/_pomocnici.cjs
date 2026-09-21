@@ -20,20 +20,41 @@ function esbuild() {
   }
 }
 
-// Sestaví src/app.jsx do CommonJS a zpřístupní vyjmenované funkce.
-// Výsledek se cachuje, aby se při běhu všech testů nebuildilo dokola.
+// Najde, který modul dané jméno vyváží.
+function kdeJeVyvezeno(jmeno) {
+  const src = path.join(KOREN, "src");
+  for (const soubor of fs.readdirSync(src).filter((f) => /\.(js|jsx)$/.test(f))) {
+    const re = new RegExp("^export\\s+(?:async\\s+)?(?:const|let|function|class)\\s+" + jmeno + "\\b", "m");
+    if (re.test(fs.readFileSync(path.join(src, soubor), "utf8"))) return soubor;
+  }
+  return null;
+}
+
+// Zpřístupní funkce ze zdrojáku pro testy čistých výpočtů.
+// Nekopíruje app.jsx — postaví jen malý soubor, který vyjmenovaná jména
+// přeposílá z modulů, kde doopravdy jsou. Díky tomu přesun funkce do
+// jiného modulu testy nerozbije.
 const cache = new Map();
 function nactiZeZdroje(nazvy) {
   const klic = nazvy.slice().sort().join(",");
   if (cache.has(klic)) return cache.get(klic);
 
+  const podleModulu = new Map();
+  for (const n of nazvy) {
+    const m = kdeJeVyvezeno(n);
+    if (!m) throw new Error("žádný modul v src/ nevyváží „" + n + "“");
+    if (!podleModulu.has(m)) podleModulu.set(m, []);
+    podleModulu.get(m).push(n);
+  }
+
   fs.mkdirSync(DOCASNE, { recursive: true });
-  const kopie = path.join(KOREN, "src", "__test-export.jsx");
+  const vstup = path.join(KOREN, "src", "__test-export.jsx");
   const vystup = path.join(DOCASNE, "export-" + Buffer.from(klic).toString("hex").slice(0, 16) + ".cjs");
   try {
-    fs.writeFileSync(kopie, fs.readFileSync(path.join(KOREN, "src", "app.jsx"), "utf8") + "\nexport { " + nazvy.join(", ") + " };\n");
+    const radky = [...podleModulu].map(([m, jm]) => 'export { ' + jm.join(", ") + ' } from "./' + m + '";');
+    fs.writeFileSync(vstup, radky.join("\n") + "\n");
     esbuild().buildSync({
-      entryPoints: [kopie],
+      entryPoints: [vstup],
       bundle: true,
       format: "cjs",
       jsx: "automatic",
@@ -43,7 +64,7 @@ function nactiZeZdroje(nazvy) {
       logLevel: "silent",
     });
   } finally {
-    fs.rmSync(kopie, { force: true });
+    fs.rmSync(vstup, { force: true });
   }
 
   // app.jsx sahá na localStorage už při načtení modulu.

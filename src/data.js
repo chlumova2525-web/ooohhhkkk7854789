@@ -90,6 +90,8 @@ export const TYP_Z = {
 
 export const PLAN_HYPOTEKA = [];
 
+export const PLAN_SOUCET = PLAN_HYPOTEKA.reduce((a, r) => a + r[4], 0);
+
 // [období, popis, částka (+ přičteno / − odmazáno), poznámka, chybí vysvětlení]
 export const DLUH_SEZNAM = [];
 
