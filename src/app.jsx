@@ -9,7 +9,7 @@ import {
   TEMATA, DEFAULT, ZDROJ, STAV, TYP_Z, PLAN_HYPOTEKA, PLAN_SOUCET, DLUH_SEZNAM, dluhZeSeznamu, planNaUkoly, migruj2, migruj, spocitej, spocitejDelnika
 } from "./data.js";
 import {
-  RELACE, zrusRelaci, prihlasSe, zmenHeslo, posliObnovu, zachytObnovu, platnyToken, ULOZISTE, KEY, zapomenPrihlaseni, KEY_V2, KEY_STARY, zalohujDenne
+  RELACE, VYZADUJE_PRIHLASENI, zrusRelaci, prihlasSe, zmenHeslo, posliObnovu, zachytObnovu, platnyToken, ULOZISTE, KEY, zapomenPrihlaseni, KEY_V2, KEY_STARY, zalohujDenne
 } from "./uloziste.js";
 import { Smazat, VyberKategorie, Doklad } from "./sdilene.jsx";
 import { Nastaveni } from "./nastaveni.jsx";
@@ -68,7 +68,7 @@ export default function App() {
 
   useEffect(() => {
     // Dokud není jisté, kdo je přihlášený, nemá se z databáze na co ptát.
-    if (!prihlasena || obnovaHesla) return;
+    if ((VYZADUJE_PRIHLASENI && !prihlasena) || obnovaHesla) return;
     let zruseno = false;
 
     (async () => {
@@ -181,7 +181,7 @@ export default function App() {
     );
 
   // Přihlášení se řeší dřív než data — dokud není, není se koho ptát.
-  if (!prihlasena)
+  if (VYZADUJE_PRIHLASENI && !prihlasena)
     return (
       <Prihlaseni
         onHotovo={() => {
@@ -277,6 +277,15 @@ function Rozcestnik({ data, onVolba, ceka }) {
               <h1 className="nazev">{data.nazev}</h1>
             </div>
           </div>
+
+          {!VYZADUJE_PRIHLASENI && (
+            <div className="hlaska" style={{ marginTop: 0, marginBottom: 16 }}>
+              <b>Zkušební verze.</b> Není připojená k žádné databázi, takže
+              se nepřihlašuje a data zůstávají jen v tomhle prohlížeči a na
+              tomhle zařízení. Nikdo jiný je neuvidí. Když smažeš historii
+              prohlížení, zmizí.
+            </div>
+          )}
 
           <button className="volba" onClick={() => onVolba("my")}>
             <span className="volbaIkona" style={{ background: "#E4EDE5" }}>

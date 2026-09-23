@@ -388,6 +388,12 @@ export const ULOZISTE = (() => {
   };
 })();
 
+// Přihlášení ověřuje databáze, ne aplikace. Když žádná nastavená není,
+// není se koho ptát — data leží jen v tomhle prohlížeči a přihlašovací
+// obrazovka by byla slepá ulička: odeslala by dotaz na adresu, která
+// neexistuje, a dál by se nikdo nedostal.
+export const VYZADUJE_PRIHLASENI = ULOZISTE.rezim === "supabase";
+
 // ── Automatická záloha ──────────────────────────────────────────
 // Historie se nikde nevede a uloz() přepíše celý řádek, takže omyl
 // z minulého týdne se nedá vzít zpět. Jednou denně se proto odloží
